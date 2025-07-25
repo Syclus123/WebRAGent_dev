@@ -199,8 +199,9 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
         
         await env.navigate_to(website)
         
-        # 初始截图
-        current_screenshot = await env.take_screenshot("initial.png")
+        # 初始化截图变量
+        # current_screenshot = await env.take_screenshot("initial.png")
+        current_screenshot = ""
         
         from agent.LLM.llm_instance import create_llm_instance
         

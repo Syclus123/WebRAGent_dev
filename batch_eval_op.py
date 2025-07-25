@@ -13,7 +13,7 @@ Usage:
     sudo apt-get update
     sudo apt-get install -y xvfb
 
-    xvfb-run -a python batch_eval_op.py --global_reward_mode dom_reward --global_reward_text_model gpt-4o-mini --snapshot test/exp --output_log test/exp/batch_operator_log.txt --rag_logging_enabled --rag_log_dir test/exp/rag_logs
+    xvfb-run -a python batch_eval_op.py --global_reward_mode dom_reward --global_reward_text_model gpt-4.1 --snapshot test/exp --output_log test/exp/batch_operator_log.txt --rag_logging_enabled --rag_log_dir test/exp/rag_logs
 """
 
 #!/usr/bin/env python3
@@ -99,7 +99,7 @@ def main():
                         help='截图目录')
     parser.add_argument('--planning_text_model', type=str, default='computer-use-preview-2025-03-11',
                         help='规划文本模型: computer-use-preview-2025-03-11/gpt-4.1')
-    parser.add_argument('--global_reward_text_model', type=str, default='gpt-4o-mini',
+    parser.add_argument('--global_reward_text_model', type=str, default='gpt-4.1',
                         help='全局奖励文本模型: gpt-4.1/gpt-4o-mini')
     parser.add_argument('--start_idx', type=int, default=0,
                         help='开始任务的索引')
