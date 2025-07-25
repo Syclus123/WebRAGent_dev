@@ -94,10 +94,21 @@ After getting the evaluation data set, use "utils/parser.py" to parse the log lo
 Please set the parameters for the json file parsing step in "configs/log_config.json"
 
 And then run the program
+
+**DOM mode**
 ```bash
 python utils/parser.py
 python utils/dataset_process.py
 ```
+
+**Operator mode**
+```bash
+python utils/operator_parser.py
+python utils/operator_dataset_process.py --results_dir results_dir/ --output_dir dataset_dir/
+```
+
+
+
 The directory of the processed data set is：
 ```bash
 results/
