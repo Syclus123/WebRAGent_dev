@@ -21,7 +21,7 @@ json_models = ["gpt-4-turbo",
                    ]
 
 [rag]
-enabled = true          # Whether to enable RAG mode(true/false)
+enabled = true          # Whether to enable RAG mode (true/false)
 rag_path = "./data/Online-Mind2Web/rag_data"    # Path to store RAG data
 
 # OpenAI Operator specific settings
@@ -100,6 +100,7 @@ gpt-3.5-turbo-0125_output_price     = 0.0000015
 gpt-3.5-turbo-1106_input_price      = 0.000001
 gpt-3.5-turbo-1106_output_price     = 0.000002
 o4-mini                             = 0.000002
+computer-use-preview-2025-03-11     = 0.000005
 # OpenAI Operator pricing (estimated - adjust based on actual pricing)
 computer-use-preview-2025-03-11_input_price  = 0.00001
 computer-use-preview-2025-03-11_output_price = 0.00003

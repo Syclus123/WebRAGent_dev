@@ -527,7 +527,7 @@ class PlanningPromptRetrievalConstructor(BasePromptConstructor):
         )
         
         # Log the retrieval results
-        from log_retrieved_tasks import log_retrieval
+        from agent.Utils.log_retrieved_tasks import log_retrieval
         log_retrieval(
             user_request=user_request,
             retrieved_tasks=retrieved_tasks,
@@ -683,7 +683,7 @@ class PlanningPromptVisionRetrievalConstructor(BasePromptConstructor):
         print(f"retrieved_image_paths: {retrieved_image_paths}")
         
         # Log the retrieval results
-        from log_retrieved_tasks import log_retrieval
+        from agent.Utils.log_retrieved_tasks import log_retrieval
         log_retrieval(
             user_request=user_request,
             retrieved_tasks=retrieved_tasks,
@@ -1015,7 +1015,7 @@ class OperatorPromptRAGConstructor(BasePromptConstructor):
             )
             
             # Log retrieval results
-            from log_retrieved_tasks import log_retrieval
+            from agent.Utils.log_retrieved_tasks import log_retrieval
             log_retrieval(
                 user_request=user_request,
                 retrieved_tasks=retrieved_tasks,
@@ -1378,6 +1378,276 @@ Please analyze the current state and provide your next action."""
     
     def stringfy_thought_and_action(self, input_list: list) -> str:
         """将思考和行动数据转换为格式化字符串"""
+        try:
+            if isinstance(input_list, str):
+                input_list = json5.loads(input_list, encoding="utf-8")
+            
+            str_output = "["
+            for idx, i in enumerate(input_list):
+                str_output += f'Step{idx + 1}:"Thought: {i.get("thought", "")}, Action: {i.get("action", "")}, Reflection: {i.get("reflection", "")}";\n'
+            str_output += "]"
+            return str_output
+            
+        except Exception as e:
+            print(f"Error stringifying thought and action: {e}")
+            return str(input_list)
+
+class OperatorPromptVisionRetrievalConstructor(BasePromptConstructor):
+    """
+    Operator prompt constructor with vision-based RAG support
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.prompt_system = OperatorPrompts.operator_rag_system
+        self.prompt_user = OperatorPrompts.operator_planning_user
+        self.max_image_dimension = 800  # Maximum image dimension for scaling
+    
+    def scale_image(self, image_path: str) -> bytes:
+        """Scale down image while maintaining aspect ratio to reduce size."""
+        from PIL import Image
+        import io
+        
+        # Open and scale image
+        with Image.open(image_path) as img:
+            # Calculate new dimensions while maintaining aspect ratio
+            width, height = img.size
+            if width > height:
+                if width > self.max_image_dimension:
+                    new_width = self.max_image_dimension
+                    new_height = int(height * (self.max_image_dimension / width))
+                else:
+                    return self._image_to_bytes(img)
+            else:
+                if height > self.max_image_dimension:
+                    new_height = self.max_image_dimension
+                    new_width = int(width * (self.max_image_dimension / height))
+                else:
+                    return self._image_to_bytes(img)
+            
+            # Scale image
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            return self._image_to_bytes(img)
+    
+    def _image_to_bytes(self, img) -> bytes:
+        """Convert PIL Image to bytes"""
+        import io
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format=img.format or 'PNG', optimize=True)
+        return img_byte_arr.getvalue()
+
+    def parse_retrieved_text(self, text: str) -> tuple:
+        """Parse the retrieved text into action space and trajectory steps."""
+        parts = text.split('\n\n')
+        action_space = parts[0]
+        trajectory_text = '\n'.join(parts[1:])
+        
+        # Parse trajectory into steps
+        steps = []
+        current_step = {}
+        
+        for line in trajectory_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+                
+            if line.startswith('Observation'):
+                if current_step:
+                    steps.append(current_step)
+                current_step = {'observation': line}
+            elif line.startswith('Action'):
+                try:
+                    action_data = json5.loads(line.split(':', 1)[1].strip())
+                    current_step['action'] = action_data
+                except:
+                    current_step['action'] = line
+                    
+        if current_step:
+            steps.append(current_step)
+            
+        return action_space, steps
+
+    def construct(
+            self,
+            user_request: str,
+            rag_path: str,
+            previous_trace: list,
+            observation: str,
+            feedback: str = "",
+            status_description: str = "",
+            screenshot_base64: str = None
+    ) -> list:
+        """
+        Build Operator prompt with visual RAG support
+
+        Args:
+            user_request: User task request
+            rag_path: The RAG data path
+            previous_trace: The history of previous operations
+            observation: The current DOM observation (not used in Operator mode)
+            feedback: Feedback or error message
+            status_description: The current task state
+            screenshot_base64: The base64 encoding of the current screenshot
+            
+        Returns:
+            A formatted list of messages
+        """
+        # Start with the base prompt
+        self.prompt_user = Template(self.prompt_user).render(
+            user_request=user_request)
+        
+        # Start with text content
+        content_parts = [{"type": "input_text", "text": self.prompt_user}]
+        
+        # Setup retrieval paths
+        retrieval_path = {
+            'collection_path': f"{rag_path}/collection",
+            'qry_embed_path': f"{rag_path}/qry_task_embed.json",
+            'cand_embed_path': f"{rag_path}/cand_embed_online_mind2web.parquet",
+            'cand_id_text_path': f"{rag_path}/cand_id_text2.json" 
+        }
+        
+        # Retrieve examples
+        retriever = TestOnlyRetriever(retrieval_path)
+        retrieved_tasks, retrieved_texts, retrieved_image_paths, retrieved_workflows = retriever.retrieve(
+            task_name=user_request,
+        )
+        print(f"🔍 Operator Vision RAG - Retrieved tasks: {retrieved_tasks}")
+        print(f"📄 Retrieved texts: {len(retrieved_texts)}")
+        print(f"🖼️  Retrieved image paths: {len(retrieved_image_paths)}")
+        
+        # Log the retrieval results
+        from agent.Utils.log_retrieved_tasks import log_retrieval
+        log_retrieval(
+            user_request=user_request,
+            retrieved_tasks=retrieved_tasks,
+            retrieved_texts=retrieved_texts,
+            retrieved_image_paths=retrieved_image_paths,
+            log_path="Logs/retrieved_tasks_operator_vision.json"
+        )
+        
+        # Store retrieval information for RAG logging
+        self.retrieved_tasks = retrieved_tasks
+        self.retrieved_texts = retrieved_texts  
+        self.retrieved_image_paths = retrieved_image_paths
+
+        # Add retrieved examples with their steps and images
+        if retrieved_tasks:
+            content_parts.append({
+                "type": "input_text", 
+                "text": "\n## Similar Task Examples with Visual References ##\n"
+            })
+            
+            for task_idx, (task, text, image_paths_json) in enumerate(zip(retrieved_tasks, retrieved_texts, retrieved_image_paths)):
+                # Parse the retrieved text
+                action_space, steps = self.parse_retrieved_text(text)
+
+                # Parse the image paths JSON string
+                try:
+                    image_paths = json5.loads(image_paths_json)
+                except:
+                    print(f"⚠️  Failed to parse image paths for task {task}")
+                    continue
+
+                # Add task description and action space
+                content_parts.append({
+                    "type": "input_text",
+                    "text": f"\n**Example {task_idx + 1}:**\n**Task:** {task}\n\n{action_space}\n"
+                })
+                
+                # Add each step with its corresponding image
+                for step_idx, (step, image_path) in enumerate(zip(steps, image_paths)):
+                    # Add the step description
+                    step_text = f"\n**Step {step_idx + 1}:**\n"
+                    step_text += f"**Action:** {json5.dumps(step['action']) if isinstance(step['action'], dict) else step['action']}\n"
+                    step_text += f"**Screenshot Reference:**\n"
+                    
+                    content_parts.append({
+                        "type": "input_text", 
+                        "text": step_text
+                    })
+                    
+                    # Add the corresponding screenshot
+                    full_image_path = f"data/Online-Mind2Web/rag_data/image/{image_path}"
+                    try:
+                        with open(full_image_path, 'rb') as img_file:
+                            img_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+                            content_parts.append({
+                                "type": "input_image",
+                                "image_url": f"data:image/png;base64,{img_base64}"
+                            })
+                    except Exception as e:
+                        print(f"❌ Error processing image {image_path}: {str(e)}")
+                        content_parts.append({
+                            "type": "input_text",
+                            "text": f"[Image {image_path} could not be loaded]\n"
+                        })
+        
+        # Add current task context
+        content_parts.append({
+            "type": "input_text", 
+            "text": "\n## Current Task Context ##"
+        })
+        
+        # Add previous trace if available
+        if len(previous_trace) > 0:
+            from agent.Memory.short_memory.history import HistoryMemory
+            trace_prompt = HistoryMemory(
+                previous_trace=previous_trace, 
+                reflection=status_description
+            ).construct_previous_trace_prompt()
+            content_parts.append({
+                "type": "input_text", 
+                "text": f"\n**Previous Actions:**\n{trace_prompt}"
+            })
+            
+            if status_description:
+                content_parts.append({
+                    "type": "input_text", 
+                    "text": f"\n**Task Status:** {status_description}"
+                })
+            
+            if feedback:
+                content_parts.append({
+                    "type": "input_text", 
+                    "text": f"\n**Feedback:** {feedback}"
+                })
+        
+        # Add current screenshot
+        if screenshot_base64:
+            content_parts.append({
+                "type": "input_text", 
+                "text": "\n**Current Webpage Screenshot:**"
+            })
+            content_parts.append({
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{screenshot_base64}"
+            })
+        
+        # Add task guidance
+        content_parts.append({
+            "type": "input_text", 
+            "text": """\n## Instructions:
+1. **Visual Analysis:** Carefully compare the current screenshot with the example screenshots
+2. **Pattern Recognition:** Identify successful interaction patterns from the examples
+3. **Action Planning:** Plan your next action based on visual similarities and task progress
+4. **Coordinate Precision:** Provide precise coordinates for click/drag actions based on visual analysis
+5. **Example Application:** Explain how the visual examples influenced your decision
+6. **Task Completion:** If the task appears complete, indicate this clearly
+
+Please analyze the current state using the visual examples as guidance and provide your next action."""
+        })
+        
+        # Construct final messages
+        messages = [
+            {"role": "system", "content": self.prompt_system},
+            {"role": "user", "content": content_parts}
+        ]
+        
+        return messages
+
+    def stringfy_thought_and_action(self, input_list: list) -> str:
+        """Convert thought and action data to formatted strings"""
         try:
             if isinstance(input_list, str):
                 input_list = json5.loads(input_list, encoding="utf-8")

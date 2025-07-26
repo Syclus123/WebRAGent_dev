@@ -8,7 +8,7 @@ from .action import ResponseError
 from logs import logger
 
 #RAG logger
-from ..Utils.rag_logger import RAGLogger
+from ..Utils.rag_logger import RAGLogger, VisionRAGLogger
 import copy
 
 # Additional imports for operator support
@@ -217,7 +217,7 @@ class OperatorMode(InteractionMode):
         self.current_screenshot = None
     
     async def execute(self, status_description, user_request, rag_enabled, rag_path, 
-                     previous_trace, observation, feedback, observation_VforD):
+                     previous_trace, observation, feedback, observation_VforD, rag_mode="description"):
         """
         Execute operator planning with proper OpenAI Operator integration
         
@@ -230,6 +230,7 @@ class OperatorMode(InteractionMode):
             observation: Current DOM observation (not used in operator mode)
             feedback: Any feedback or error messages
             observation_VforD: Screenshot in base64 format
+            rag_mode: RAG mode - "description" or "vision" (default: "description")
             
         Returns:
             Tuple of (planning_response, error_message, planning_response_thought, 
@@ -238,6 +239,7 @@ class OperatorMode(InteractionMode):
         rag_data = {
             "rag_enabled": rag_enabled,
             "rag_path": rag_path if rag_enabled else None,
+            "rag_mode": rag_mode,
             "mode": "operator"
         }
         
@@ -250,7 +252,7 @@ class OperatorMode(InteractionMode):
             
             # Build conversation messages
             messages = self._build_operator_messages(user_request, status_description, 
-                                                   previous_trace, feedback, rag_enabled, rag_path)
+                                                   previous_trace, feedback, rag_enabled, rag_path, rag_mode)
             
             # 将构建过程中收集的RAG信息合并到最终的rag_data中
             rag_data.update(self.current_rag_data)
@@ -332,7 +334,7 @@ class OperatorMode(InteractionMode):
     
     def _build_operator_messages(self, user_request: str, status_description: str,
                                previous_trace: str, feedback: str, 
-                               rag_enabled: bool, rag_path: str) -> List[Dict[str, Any]]:
+                               rag_enabled: bool, rag_path: str, rag_mode: str = "description") -> List[Dict[str, Any]]:
         """
         Build messages for OpenAI Operator
         
@@ -348,29 +350,33 @@ class OperatorMode(InteractionMode):
             Formatted messages for operator
         """
         if rag_enabled:
-            # 使用基于描述的RAG构造器
-            from agent.Prompt.prompt_constructor import OperatorPromptDescriptionRetrievalConstructor
-            
-            rag_constructor = OperatorPromptDescriptionRetrievalConstructor()
+            # 根据rag_mode选择对应的RAG构造器
+            if rag_mode == "vision":
+                from agent.Prompt.prompt_constructor import OperatorPromptVisionRetrievalConstructor
+                rag_constructor = OperatorPromptVisionRetrievalConstructor()
+                constructor_type = "OperatorPromptVisionRetrievalConstructor"
+            else:  # rag_mode == "description"
+                from agent.Prompt.prompt_constructor import OperatorPromptDescriptionRetrievalConstructor
+                rag_constructor = OperatorPromptDescriptionRetrievalConstructor()
+                constructor_type = "OperatorPromptDescriptionRetrievalConstructor"
             
             if hasattr(self, 'current_rag_data'):
                 self.current_rag_data["rag_method"] = rag_constructor.__class__.__name__
-                self.current_rag_data["rag_constructor_type"] = "OperatorPromptDescriptionRetrievalConstructor"
+                self.current_rag_data["rag_constructor_type"] = constructor_type
             
             previous_trace_list = []
             if previous_trace:
-                # 简单解析previous_trace字符串
                 trace_lines = previous_trace.split('\n')
                 for line in trace_lines:
                     if line.strip():
-                        # 尝试解析 "Step X: thought -> action" 格式
+                        # "Step X: thought -> action" format
                         if " -> " in line:
                             parts = line.split(" -> ")
                             if len(parts) >= 2:
                                 thought_part = parts[0].strip()
                                 action_part = parts[1].strip()
                                 
-                                # 提取思考内容（去掉 "Step X: " 前缀）
+                                # thought context（Get rid of "Step X: "）
                                 if ":" in thought_part:
                                     thought = thought_part.split(":", 1)[1].strip()
                                 else:
@@ -382,7 +388,6 @@ class OperatorMode(InteractionMode):
                                     "reflection": ""
                                 })
                         else:
-                            # 格式不匹配:创建一个基本的trace项
                             previous_trace_list.append({
                                 "thought": "Previous action",
                                 "action": line.strip(),
@@ -394,23 +399,54 @@ class OperatorMode(InteractionMode):
                 user_request=user_request,
                 rag_path=rag_path,
                 previous_trace=previous_trace_list,
-                observation="",  # Operator模式不使用DOM观察
+                observation="",  # Operator not use DOM observation
                 feedback=feedback,
                 status_description=status_description,
                 screenshot_base64=self.current_screenshot
             )
             
             if hasattr(self, 'current_rag_data'):
-                self.current_rag_data.update({
-                    "rag_constructor_used": True,
-                    "rag_reference": getattr(rag_constructor, 'reference', ""),
-                    "previous_trace_processed": previous_trace_list,
-                    "messages_count": len(messages),
-                    "user_request": user_request,
-                    "status_description": status_description,
-                    "feedback": feedback,
-                    "screenshot_available": self.current_screenshot is not None
-                })
+                if constructor_type == "OperatorPromptVisionRetrievalConstructor":
+                    # Vision RAG data
+                    retrieved_images = []
+                    if hasattr(rag_constructor, 'retrieved_image_paths') and rag_constructor.retrieved_image_paths:
+                        for i, image_path_json in enumerate(rag_constructor.retrieved_image_paths):
+                            try:
+                                image_paths = json5.loads(image_path_json)
+                                for path in image_paths:
+                                    retrieved_images.append({
+                                        "path": path,
+                                        "task_index": i,
+                                        "task_name": rag_constructor.retrieved_tasks[i] if i < len(rag_constructor.retrieved_tasks) else "Unknown"
+                                    })
+                            except:
+                                pass
+                    
+                    self.current_rag_data.update({
+                        "rag_constructor_used": True,
+                        "retrieved_tasks": getattr(rag_constructor, 'retrieved_tasks', []),
+                        "retrieved_texts": getattr(rag_constructor, 'retrieved_texts', []),
+                        "retrieved_images": retrieved_images,
+                        "previous_trace_processed": previous_trace_list,
+                        "messages_count": len(messages),
+                        "user_request": user_request,
+                        "status_description": status_description,
+                        "feedback": feedback,
+                        "current_screenshot": self.current_screenshot,
+                        "screenshot_available": self.current_screenshot is not None
+                    })
+                else:
+                    # Description RAG特定数据
+                    self.current_rag_data.update({
+                        "rag_constructor_used": True,
+                        "rag_reference": getattr(rag_constructor, 'reference', ""),
+                        "previous_trace_processed": previous_trace_list,
+                        "messages_count": len(messages),
+                        "user_request": user_request,
+                        "status_description": status_description,
+                        "feedback": feedback,
+                        "screenshot_available": self.current_screenshot is not None
+                    })
                 
                 # 记录构建的prompt内容（去除图片数据）
                 safe_messages = []
@@ -438,8 +474,11 @@ class OperatorMode(InteractionMode):
                 
                 self.current_rag_data["constructed_messages"] = safe_messages
             
-            logger.info(f"🧠 RAG Constructor: {rag_constructor.__class__.__name__}")
-            logger.info(f"📚 RAG Reference Length: {len(getattr(rag_constructor, 'reference', ''))}")
+            logger.info(f"🧠 RAG Constructor: {rag_constructor.__class__.__name__} (Mode: {rag_mode})")
+            if rag_mode == "vision":
+                logger.info(f"🖼️  Using Vision RAG with visual examples")
+            else:
+                logger.info(f"📚 RAG Reference Length: {len(getattr(rag_constructor, 'reference', ''))}")
             
             return messages
         else:
@@ -684,11 +723,19 @@ class Planning:
         observation_VforD,
         status_description,
         rag_enabled,
-        rag_path
+        rag_path,
+        rag_mode="description"
     ):
 
-        rag_logger = RAGLogger()
-        # # Get the current step index from previous_trace
+        # 根据RAG模式选择对应的日志记录器
+        if rag_enabled and rag_mode == "vision":
+            rag_logger = VisionRAGLogger()
+            logger_method = "log_vision_rag_step"
+        else:
+            rag_logger = RAGLogger()
+            logger_method = "log_rag_step"
+        
+        # Get the current step index from previous_trace
         step_idx = len(previous_trace)
         # task id
         task_id = f"{user_request[:50]}_{int(time.time())}"
@@ -713,15 +760,27 @@ class Planning:
             "operator": OperatorMode(text_model=llm_planning_text)  # Add operator mode
         }
 
-        result = await modes[mode].execute(
-            status_description=status_description,
-            user_request=user_request,
-            rag_enabled=rag_enabled,
-            rag_path=rag_path,
-            previous_trace=previous_trace,
-            observation=observation,
-            feedback=feedback,
-            observation_VforD=observation_VforD)
+        if mode == "operator":
+            result = await modes[mode].execute(
+                status_description=status_description,
+                user_request=user_request,
+                rag_enabled=rag_enabled,
+                rag_path=rag_path,
+                previous_trace=previous_trace,
+                observation=observation,
+                feedback=feedback,
+                observation_VforD=observation_VforD,
+                rag_mode=rag_mode)
+        else:
+            result = await modes[mode].execute(
+                status_description=status_description,
+                user_request=user_request,
+                rag_enabled=rag_enabled,
+                rag_path=rag_path,
+                previous_trace=previous_trace,
+                observation=observation,
+                feedback=feedback,
+                observation_VforD=observation_VforD)
         
         # Check if any RAG data is returned
         if len(result) >= 6 and mode in ["dom", "operator"]:  # Both DomMode and OperatorMode return rag_data
@@ -729,7 +788,12 @@ class Planning:
         
             rag_data["mode"] = mode
             rag_data["user_request"] = user_request
-            rag_logger.log_rag_step(task_id, step_idx, rag_data)
+            
+            # 使用对应的日志记录方法
+            if logger_method == "log_vision_rag_step":
+                rag_logger.log_vision_rag_step(task_id, step_idx, rag_data)
+            else:
+                rag_logger.log_rag_step(task_id, step_idx, rag_data)
         else:
             # Compatible with other patterns that do not return rag_data
             planning_response, error_message, planning_response_thought, planning_response_action, planning_token_count = result
@@ -740,7 +804,12 @@ class Planning:
                 "user_request": user_request,
                 "rag_enabled": False
             }
-            rag_logger.log_rag_step(task_id, step_idx, rag_data)
+            
+            # 使用对应的日志记录方法
+            if logger_method == "log_vision_rag_step":
+                rag_logger.log_vision_rag_step(task_id, step_idx, rag_data)
+            else:
+                rag_logger.log_rag_step(task_id, step_idx, rag_data)
 
         logger.info(f"\033[34mPlanning_Response:\n{planning_response}\033[0m")
         

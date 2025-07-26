@@ -13,7 +13,7 @@ Usage:
     sudo apt-get update
     sudo apt-get install -y xvfb
 
-    xvfb-run -a python batch_eval_op.py --global_reward_mode dom_reward --global_reward_text_model gpt-4.1 --snapshot test/exp --output_log test/exp/batch_operator_log.txt --rag_logging_enabled --rag_log_dir test/exp/rag_logs
+    xvfb-run -a python batch_eval_op.py --global_reward_mode dom_reward --global_reward_text_model gpt-4.1 --snapshot test/exp --output_log test/exp/batch_operator_log.txt --rag_mode vision --rag_logging_enabled --rag_log_dir test/exp/rag_logs 
 """
 
 #!/usr/bin/env python3
@@ -62,12 +62,16 @@ def run_single_operator_task(task, current_idx, args):
     if args.rag_log_dir:
         command.extend(["--rag_log_dir", args.rag_log_dir])
     
+    # RAG mode
+    command.extend(["--rag_mode", args.rag_mode])
+    
     print(f"\n{'='*80}")
     print(f"🤖 Operator任务 [{current_idx}]: {task_name}")
     print(f"🌐 网站: {website}")
     print(f"🔧 任务ID: {task_id}")
     print(f"📱 模型: {args.planning_text_model}")
     print(f"📝 RAG日志: {'启用' if args.rag_logging_enabled else '禁用'}")
+    print(f"🧠 RAG模式: {args.rag_mode}")
     if args.rag_logging_enabled and args.rag_log_dir:
         print(f"📂 RAG日志目录: {args.rag_log_dir}")
     print(f"{'='*80}")
@@ -89,7 +93,7 @@ def run_single_operator_task(task, current_idx, args):
 
 def main():
     parser = argparse.ArgumentParser(description='OpenAI Operator Mode Batch Evaluation')
-    parser.add_argument('--json_path', type=str, default='data/Online-Mind2Web/72exp30.json',
+    parser.add_argument('--json_path', type=str, default='data/Online-Mind2Web/12.json',
                         help='JSON任务文件路径')
     parser.add_argument('--global_reward_mode', type=str, default='dom_reward',
                         help='全局奖励模式: dom_reward/no_global_reward/dom_vision_reward')
@@ -121,6 +125,9 @@ def main():
                         help='启用RAG日志记录')
     parser.add_argument('--rag_log_dir', type=str, default=None,
                         help='RAG日志文件的输出目录')
+    parser.add_argument('--rag_mode', type=str, default='description',
+                        choices=['description', 'vision'],
+                        help='RAG模式: description (使用文本描述) 或 vision (使用视觉示例)')
     
     args = parser.parse_args()
     
@@ -159,6 +166,7 @@ def main():
         log_file.write(f"⏱️  任务间延迟: {args.delay}秒\n")
         log_file.write(f"🔄 最大重试次数: {args.max_retries}\n")
         log_file.write(f"📝 RAG日志: {'启用' if args.rag_logging_enabled else '禁用'}\n")
+        log_file.write(f"🧠 RAG模式: {args.rag_mode}\n")
         if args.rag_logging_enabled and args.rag_log_dir:
             log_file.write(f"📂 RAG日志目录: {args.rag_log_dir}\n")
         log_file.write("\n")
@@ -166,6 +174,7 @@ def main():
     print(f"🚀 开始OpenAI Operator批量任务评估")
     print(f"📊 任务范围: {start_idx} - {end_idx-1} (共{total_tasks}个任务)")
     print(f"🤖 使用模型: {args.planning_text_model}")
+    print(f"🧠 RAG模式: {args.rag_mode}")
     print(f"📁 结果目录: {args.snapshot}")
     print(f"📸 截图目录: {img_screenshots_dir}")
     

@@ -20,6 +20,9 @@ The framework now supports the OpenAI Operator mode, allowing direct web automat
 - Based on the actual browser coordinate system.
 - Fully compatible with the OpenAI Responses API.
 
+### 🧠 Memory
+- Both vision-based and description-based RAG methods are supported
+
 …………
 
 
@@ -85,7 +88,7 @@ xvfb-run -a python batch_eval.py
 xvfb-run -a python batch_eval_op.py
 ```
 
-#### tips: ……
+#### tips: In batch_eval_op.py, use the rag_mode parameter to set the RAG mode ('description', 'vision', or 'none').
 
 
 ### 🔍 Evaluate data processing 

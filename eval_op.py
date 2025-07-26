@@ -51,6 +51,7 @@ class ExperimentConfig:
     screenshot_base_dir: str
     rag_logging_enabled: bool
     rag_log_dir: str
+    rag_mode: str
 
 def validate_config(config, observation_mode, global_reward_mode, observation_model, global_reward_model):
     """
@@ -169,7 +170,7 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
                           reference_task_length, reference_evaluate_steps, 
                           screenshot_params, rag_enabled, rag_path, global_reward_mode="no_global_reward", 
                           global_reward_text_model="gpt-4o-mini", ground_truth_mode=False, ground_truth_data=None,
-                          rag_logging_enabled=False, rag_log_dir=None):
+                          rag_logging_enabled=False, rag_log_dir=None, rag_mode="description"):
     """
     运行operator任务 (支持DOM reward和智能停止)
     """
@@ -177,15 +178,22 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
     logger.info(f"📱 Model: {planning_text_model}")
     logger.info(f"🌐 Website: {website}")
     logger.info(f"🏆 Reward mode: {global_reward_mode}")
+    logger.info(f"🧠 RAG mode: {rag_mode}")
     logger.info(f"📝 RAG logging: {'Enabled' if rag_logging_enabled else 'Disabled'}")
     
-    # 初始化RAG Logger
+    # RAG Logger
     rag_logger = None
     if rag_logging_enabled:
-        from agent.Utils.rag_logger import RAGLogger
-        rag_logger = RAGLogger(rag_log_dir=rag_log_dir)
-        actual_rag_dir = rag_logger.rag_dir
-        logger.info(f"📂 RAG logs will be saved to: {actual_rag_dir}")
+        if rag_mode == "vision":
+            from agent.Utils.rag_logger import VisionRAGLogger
+            rag_logger = VisionRAGLogger(rag_log_dir=rag_log_dir)
+            actual_rag_dir = rag_logger.vision_rag_dir
+            logger.info(f"📂 Vision RAG logs will be saved to: {actual_rag_dir}")
+        else:
+            from agent.Utils.rag_logger import RAGLogger
+            rag_logger = RAGLogger(rag_log_dir=rag_log_dir)
+            actual_rag_dir = rag_logger.rag_dir
+            logger.info(f"📂 RAG logs will be saved to: {actual_rag_dir}")
     
     # 启动环境
     await env.start()
@@ -351,7 +359,8 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
                     previous_trace=previous_trace_str,
                     observation="",  # operator模式不需要DOM观察
                     feedback=feedback,
-                    observation_VforD=current_screenshot
+                    observation_VforD=current_screenshot,
+                    rag_mode=rag_mode
                 )
                 
                 if error_message:
@@ -361,7 +370,7 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
                 logger.info(f"Step Thought: {planning_response_thought}")
                 logger.info(f"Step Action: {planning_response_action}")
                 
-                # RAG信息记录 (如果启用)
+                # RAG logger
                 if rag_logging_enabled and rag_logger and rag_data:
                     try:
                         # 添加额外的步骤信息
@@ -380,7 +389,6 @@ async def run_operator_task(env, task_name, task_uuid, website, config,
                             "screenshot_filename": screenshot_filename
                         })
                         
-                        # 记录RAG信息
                         rag_file_path = rag_logger.log_rag_step(task_uuid, step_count, rag_data)
                         logger.info(f"📝 RAG information logged to: {rag_file_path}")
                         
@@ -1019,7 +1027,6 @@ async def suggest_alternative_action(env, failed_action_type, task_name):
         dict: 建议的替代操作，如果没有建议则返回None
     """
     try:
-        # 分析页面当前状态
         page_info = await env.page.evaluate("""
             () => {
                 // 检查页面上的可交互元素
@@ -1180,7 +1187,8 @@ async def run_experiment(task_range, experiment_config):
                 ground_truth_mode=experiment_config.ground_truth_mode,
                 ground_truth_data=experiment_config.ground_truth_data,
                 rag_logging_enabled=experiment_config.rag_logging_enabled,
-                rag_log_dir=experiment_config.rag_log_dir
+                rag_log_dir=experiment_config.rag_log_dir,
+                rag_mode=experiment_config.rag_mode
             )
         else:
             # Other modes use the original logic
@@ -1229,7 +1237,8 @@ async def main(global_reward_mode="no_global_reward",
                toml_path=None,
                screenshot_base_dir=None,
                rag_logging_enabled=False,
-               rag_log_dir=None
+               rag_log_dir=None,
+               rag_mode="description"
                ):
     config = read_config(toml_path)
     config['single_task_website'] = single_task_website
@@ -1270,7 +1279,8 @@ async def main(global_reward_mode="no_global_reward",
         rag_path=rag_path,
         screenshot_base_dir=screenshot_base_dir,
         rag_logging_enabled=rag_logging_enabled,
-        rag_log_dir=rag_log_dir
+        rag_log_dir=rag_log_dir,
+        rag_mode=rag_mode
     )
 
     await run_experiment(task_range, experiment_config)
@@ -1305,6 +1315,9 @@ if __name__ == "__main__":
                         help="Enable RAG logging for operator mode")
     parser.add_argument("--rag_log_dir", type=str, default=None,
                         help="Directory to store RAG logs (default: results_dir/rag_result)")
+    parser.add_argument("--rag_mode", type=str, default="description",
+                        choices=["description", "vision"],
+                        help="RAG mode: description (use text descriptions) or vision (use visual examples)")
 
     args = parser.parse_args()
 
@@ -1319,6 +1332,7 @@ if __name__ == "__main__":
                      toml_path=args.toml_path,
                      screenshot_base_dir=args.screenshot_base_dir,
                      rag_logging_enabled=args.rag_logging_enabled,
-                     rag_log_dir=args.rag_log_dir
+                     rag_log_dir=args.rag_log_dir,
+                     rag_mode=args.rag_mode
                      )
                 ) 
